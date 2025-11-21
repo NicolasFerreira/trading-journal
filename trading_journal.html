@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ApexTrader - Hyper Style</title>
+    
+    <!-- Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons: Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <!-- Frameworks: Tailwind CSS & Alpine.js -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Tailwind Configuration -->
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        hyper: {
+                            base: '#0e0e10',
+                            surface: '#16171a',
+                            border: '#25272b',
+                            green: '#50d2c1',   
+                            greenDim: 'rgba(80, 210, 193, 0.1)',
+                            red: '#FF453A',
+                            redDim: 'rgba(255, 69, 58, 0.1)',
+                            text: '#A9ABB1',
+                            white: '#F5F6F7'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- APP LOGIC -->
+    <script>
+        function tradingApp() {
+            return {
+                // Navigation State
+                activeTab: 'dashboard', 
+                
+                navItems: [
+                    { id: 'dashboard', name: 'Dashboard', icon: 'ph-squares-four' },
+                    { id: 'journal', name: 'Journal', icon: 'ph-notebook' },
+                    { id: 'analytics', name: 'Analytics', icon: 'ph-chart-bar' },
+                    { id: 'settings', name: 'Settings', icon: 'ph-gear' }, // NEW TAB
+                ],
+                
+                // Data State
+                trades: [],
+                journalNotes: {}, // Changed from simple string to object { '2023-10-25': 'Note...' }
+                currentNoteContent: '', // Temporary holder for textarea
+                basePortfolio: 45000, 
+                
+                // UI State
+                showModal: false,
+                noteSaved: false,
+                currentMonthName: '',
+                currentDate: new Date(),
+                selectedDate: new Date().toISOString().split('T')[0], // Track selected day for notes
+                blanks: [],
+                days: [],
+                
+                // Form State
+                newTradeForm: {
+                    pair: 'BTC-PERP',
+                    side: 'Long',
+                    pnl: '',
+                    date: new Date().toISOString().split('T')[0],
+                    notes: '' 
+                },
+
+                selectDay(day) {
+                    // Format: YYYY-MM-DD
+                    const year = this.currentDate.getFullYear();
+                    const month = String(this.currentDate.getMonth() + 1).padStart(2, '0');
+                    const dayStr = String(day).padStart(2, '0');
+                    this.selectedDate = `${year}-${month}-${dayStr}`;
+                    
+                    // Load note for this day
+                    this.currentNoteContent = this.journalNotes[this.selectedDate] || '';
+                },
+
+                init() {
+                    this.loadData();
+                    this.generateCalendar();
+                    // Load today's note on init
+                    this.selectDay(new Date().getDate());
+                },
+
+                // --- NAVIGATION ---
+                switchTab(tabId) {
+                    this.activeTab = tabId;
+                    this.syncError = null; // Reset errors on tab switch
+                },
+
+                // --- PERSISTENCE & DATA ---
+                loadData() {
+                    try {
+                        const storedTrades = localStorage.getItem('apex_trades');
+                        const storedNotes = localStorage.getItem('apex_journal_notes'); // Changed key
+                        const storedPortfolio = localStorage.getItem('apex_portfolio');
+
+                        if (storedTrades) {
+                            this.trades = JSON.parse(storedTrades);
+                        } else {
+                            this.seedData();
+                        }
+
+                        if (storedNotes) {
+                            this.journalNotes = JSON.parse(storedNotes);
+                        } else {
+                            this.journalNotes = {}; // Initialize empty object if null
+                        }
+                        
+                        if (storedPortfolio) this.basePortfolio = parseFloat(storedPortfolio);
+
+                    } catch (e) {
+                        console.error("Error loading data", e);
+                        this.seedData();
+                        this.journalNotes = {};
+                    }
+                },
+
+                saveData() {
+                    localStorage.setItem('apex_trades', JSON.stringify(this.trades));
+                    this.generateCalendar(); 
+                },
+
+                savePortfolio() {
+                    localStorage.setItem('apex_portfolio', this.basePortfolio);
+                    alert('Starting Balance Updated!');
+                },
+
+                saveNote() {
+                    // Key by date: YYYY-MM-DD
+                    const dateKey = this.selectedDate || new Date().toISOString().split('T')[0];
+                    this.journalNotes[dateKey] = this.currentNoteContent;
+                    
+                    localStorage.setItem('apex_journal_notes', JSON.stringify(this.journalNotes));
+                    
+                    this.noteSaved = true;
+                    setTimeout(() => this.noteSaved = false, 2000);
+                },
+
+                resetData() {
+                    if(confirm('Reset all data to default?')) {
+                        localStorage.clear(); // Clear everything including settings
+                        location.reload();
+                    }
+                },
+
+                // --- HYPERLIQUID SYNC LOGIC ---
+                async syncHyperliquid() {
+                    if (!this.hyperliquidAddress) {
+                        this.syncError = "Please enter a wallet address first.";
+                        return;
+                    }
+
+                    this.isSyncing = true;
+                    this.syncError = null;
+
+                    try {
+                        // POST request to Hyperliquid Info API
+                        const response = await fetch('https://api.hyperliquid.xyz/info', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                type: "userFills",
+                                user: this.hyperliquidAddress
+                            })
+                        });
+
+                        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+
+                        const data = await response.json();
+                        
+                        // Transform HL data to Apex format
+                        // HL Data format example: { coin: "ETH", side: "B", closedPnl: "10.5", time: 1234567890, ... }
+                        const newTrades = data.map(fill => {
+                            // Only process fills that have a realized PnL (closes)
+                            // Note: This is a simplified logic. In reality, fills are partial. 
+                            // We filter for non-zero PnL to approximate "Closed" trades for the journal.
+                            if (parseFloat(fill.closedPnl) === 0) return null;
+
+                            return {
+                                id: fill.time + Math.random(), // Unique ID
+                                pair: `${fill.coin}-PERP`,
+                                side: fill.side === 'B' ? 'Long' : 'Short', // B = Buy (Long), A = Sell (Short) approximation
+                                pnl: parseFloat(fill.closedPnl),
+                                date: new Date(fill.time).toISOString().split('T')[0],
+                                notes: `Synced from HL (Sz: ${fill.sz} @ ${fill.px})`
+                            };
+                        }).filter(t => t !== null); // Remove nulls (open positions/entry fills)
+
+                        if (newTrades.length === 0) {
+                            this.syncError = "No closed trades with PnL found for this address.";
+                        } else {
+                            // Merge strategies: Overwrite or Append? Here we append unique ones based on time/id
+                            // For simplicity in prototype: We replace current trades or just add to top
+                            this.trades = [...newTrades, ...this.trades];
+                            // Remove duplicates roughly? (Skipped for prototype simplicity)
+                            this.saveData();
+                            alert(`Successfully synced ${newTrades.length} trades from Hyperliquid!`);
+                        }
+
+                    } catch (err) {
+                        console.error(err);
+                        this.syncError = "Connection Failed. If you are running this locally, you may need a 'CORS Unblock' extension, as browsers block direct API calls from file://.";
+                    } finally {
+                        this.isSyncing = false;
+                    }
+                },
+
+                seedData() {
+                    // Removed mock trades
+                    this.trades = [];
+                    this.saveData();
+                },
+
+                // --- ACTIONS ---
+                openModal() {
+                    this.newTradeForm = {
+                        pair: 'BTC-PERP',
+                        side: 'Long',
+                        pnl: '',
+                        date: new Date().toISOString().split('T')[0],
+                        notes: ''
+                    };
+                    this.showModal = true;
+                },
+
+                closeModal() {
+                    this.showModal = false;
+                },
+
+                submitTrade() {
+                    if (!this.newTradeForm.pair || !this.newTradeForm.pnl || !this.newTradeForm.date) return;
+
+                    const trade = {
+                        id: Date.now(),
+                        pair: this.newTradeForm.pair.toUpperCase(),
+                        side: this.newTradeForm.side,
+                        pnl: parseFloat(this.newTradeForm.pnl),
+                        date: this.newTradeForm.date,
+                        notes: this.newTradeForm.notes || ''
+                    };
+
+                    this.trades.unshift(trade);
+                    this.saveData();
+                    this.closeModal();
+                },
+
+                deleteTrade(id) {
+                    if(confirm('Delete this trade?')) {
+                        this.trades = this.trades.filter(t => t.id !== id);
+                        this.saveData();
+                    }
+                },
+
+                // --- COMPUTED STATS & ANALYTICS ---
+                get sortedTrades() {
+                    return [...this.trades].sort((a, b) => new Date(b.date) - new Date(a.date));
+                },
+                
+                get chronologicalTrades() {
+                    return [...this.trades].sort((a, b) => new Date(a.date) - new Date(b.date));
+                },
+
+                get portfolioValue() {
+                    const totalPnL = this.trades.reduce((sum, t) => sum + t.pnl, 0);
+                    // Ensure basePortfolio is treated as a number
+                    return (parseFloat(this.basePortfolio) || 0) + totalPnL;
+                },
+                
+                get portfolioPnlPercentage() {
+                    const totalPnL = this.trades.reduce((sum, t) => sum + t.pnl, 0);
+                    const base = parseFloat(this.basePortfolio) || 1; // Avoid division by zero
+                    return ((totalPnL / base) * 100).toFixed(2);
+                },
+
+                get stats() {
+                    const totalTrades = this.trades.length;
+                    if (totalTrades === 0) return { winRate: 0, netPnL: 0, profitFactor: 0, avgTrade: 0, avgWin: 0 };
+
+                    const wins = this.trades.filter(t => t.pnl > 0);
+                    const losses = this.trades.filter(t => t.pnl <= 0);
+                    
+                    const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
+                    const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+                    const netPnL = grossProfit - grossLoss;
+
+                    const profitFactor = grossLoss === 0 ? grossProfit : (grossProfit / grossLoss).toFixed(2);
+                    const winRate = ((wins.length / totalTrades) * 100).toFixed(0);
+                    const avgTrade = (netPnL / totalTrades).toFixed(0);
+                    const avgWin = wins.length ? (grossProfit / wins.length).toFixed(0) : 0;
+
+                    return { winRate, netPnL, profitFactor, avgTrade, avgWin };
+                },
+
+                get pairPerformance() {
+                    const pairs = {};
+                    this.trades.forEach(t => {
+                        if(!pairs[t.pair]) pairs[t.pair] = { pnl: 0, count: 0, wins: 0 };
+                        pairs[t.pair].pnl += t.pnl;
+                        pairs[t.pair].count += 1;
+                        if(t.pnl > 0) pairs[t.pair].wins += 1;
+                    });
+                    
+                    return Object.entries(pairs).map(([name, data]) => ({
+                        name,
+                        pnl: data.pnl,
+                        count: data.count,
+                        winRate: Math.round((data.wins / data.count) * 100)
+                    })).sort((a, b) => b.pnl - a.pnl);
+                },
+
+                get equityCurvePoints() {
+                    if (this.trades.length === 0) return "";
+                    let balance = this.basePortfolio;
+                    let dataPoints = [balance];
+                    this.chronologicalTrades.forEach(t => {
+                        balance += t.pnl;
+                        dataPoints.push(balance);
+                    });
+                    const maxVal = Math.max(...dataPoints);
+                    const minVal = Math.min(...dataPoints);
+                    const range = maxVal - minVal || 1;
+                    const width = 1000;
+                    const height = 300;
+                    const stepX = width / (dataPoints.length - 1 || 1);
+                    return dataPoints.map((val, index) => {
+                        const x = index * stepX;
+                        const y = height - ((val - minVal) / range) * height; 
+                        return `${x},${y}`;
+                    }).join(" ");
+                },
+
+                generateCalendar() {
+                    const year = this.currentDate.getFullYear();
+                    const month = this.currentDate.getMonth();
+                    this.currentMonthName = this.currentDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+                    const firstDay = new Date(year, month, 1).getDay();
+                    const startOffset = (firstDay === 0 ? 7 : firstDay) - 1;
+                    this.blanks = Array.from({ length: startOffset }, (_, i) => i);
+
+                    const daysInMonth = new Date(year, month + 1, 0).getDate();
+                    const today = new Date(); // Real today
+                    const isCurrentMonth = today.getMonth() === month && today.getFullYear() === year;
+
+                    this.days = [];
+
+                    for (let i = 1; i <= daysInMonth; i++) {
+                        const currentDayKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+                        const daysTrades = this.trades.filter(t => t.date === currentDayKey);
+                        const dayPnL = daysTrades.reduce((sum, t) => sum + t.pnl, 0);
+
+                        this.days.push({
+                            date: i,
+                            isToday: isCurrentMonth && i === today.getDate(),
+                            trades: daysTrades.length,
+                            pnl: dayPnL
+                        });
+                    }
+                },
+
+                changeMonth(offset) {
+                    this.currentDate.setMonth(this.currentDate.getMonth() + offset);
+                    // Force update (Alpine reactivity sometimes needs a nudge with Date objects in complex logic, 
+                    // but reassigning a new Date usually works)
+                    this.currentDate = new Date(this.currentDate);
+                    this.generateCalendar();
+                },
+
+                formatMoney(val) {
+                    if (val === undefined || val === null) return '$0';
+                    return (val >= 0 ? '$' : '-$') + Math.abs(val).toLocaleString();
+                },
+
+                formatDate(dateStr) {
+                    if (!dateStr) return '';
+                    return new Date(dateStr).toLocaleDateString(undefined, { month: '2-digit', day: '2-digit' });
+                }
+            }
+        }
+    </script>
+
+    <!-- Load Alpine AFTER the script -->
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0e0e10; }
+        ::-webkit-scrollbar-thumb { background: #25272b; }
+        ::-webkit-scrollbar-thumb:hover { background: #3a3d42; }
+        [x-cloak] { display: none !important; }
+        table { border-collapse: collapse; }
+    </style>
+</head>
+<body class="bg-hyper-base text-hyper-text font-sans h-screen overflow-hidden flex selection:bg-hyper-green/20 selection:text-hyper-green">
+
+    <!-- Main App Container -->
+    <div x-data="tradingApp()" class="w-full h-full flex">
+
+        <!-- SIDEBAR -->
+        <aside class="w-60 bg-hyper-surface border-r border-hyper-border flex flex-col justify-between hidden md:flex z-20">
+            <div>
+                <!-- Logo Area -->
+                <div class="h-16 flex items-center px-6 border-b border-hyper-border">
+                    <div class="w-6 h-6 bg-hyper-green rounded-sm flex items-center justify-center mr-3">
+                        <i class="ph-bold ph-lightning text-hyper-base"></i>
+                    </div>
+                    <span class="text-hyper-white font-bold font-mono tracking-tight">HYPER<span class="text-hyper-green">JOURNAL</span></span>
+                </div>
+
+                <!-- Navigation -->
+                <nav class="p-3 space-y-1 mt-4">
+                    <template x-for="item in navItems" :key="item.id">
+                        <a href="#" 
+                           @click.prevent="switchTab(item.id)"
+                           class="flex items-center px-4 py-2.5 rounded-sm transition-all duration-150 group"
+                           :class="activeTab === item.id ? 'bg-hyper-green/10 text-hyper-green border-l-2 border-hyper-green' : 'text-hyper-text hover:text-hyper-white hover:bg-white/5 border-l-2 border-transparent'">
+                            <i :class="item.icon" class="text-lg mr-3 opacity-80"></i>
+                            <span class="text-sm font-medium font-mono" x-text="item.name"></span>
+                        </a>
+                    </template>
+                </nav>
+            </div>
+
+            <!-- Bottom Actions -->
+            <div class="p-4 border-t border-hyper-border">
+                <button class="w-full flex items-center gap-3 px-3 py-2 rounded-sm hover:bg-white/5 text-xs text-hyper-text hover:text-hyper-white transition-colors" @click="resetData()">
+                    <i class="ph ph-trash"></i>
+                    <span class="font-mono">Reset Data</span>
+                </button>
+                <div class="mt-2 text-[10px] text-center text-hyper-border uppercase tracking-widest font-mono">v2.2.0 HL-Sync</div>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="flex-1 flex flex-col relative min-w-0 bg-hyper-base">
+            
+            <!-- HEADER -->
+            <header class="h-16 bg-hyper-base border-b border-hyper-border flex items-center justify-between px-6 sticky top-0 z-10">
+                <div class="flex items-center gap-8">
+                    <div>
+                        <p class="text-[10px] text-hyper-text font-mono uppercase tracking-wide mb-0.5">Equity</p>
+                        <div class="flex items-baseline gap-3">
+                            <h1 class="text-xl font-bold text-hyper-white font-mono" x-text="formatMoney(portfolioValue)"></h1>
+                            <span class="text-xs font-mono font-medium"
+                                  :class="portfolioPnlPercentage >= 0 ? 'text-hyper-green' : 'text-hyper-red'"
+                                  x-text="(portfolioPnlPercentage >= 0 ? '+' : '') + portfolioPnlPercentage + '%'"></span>
+                        </div>
+                    </div>
+                    <div class="h-6 w-[1px] bg-hyper-border"></div>
+                    <h2 class="text-sm font-mono text-hyper-white uppercase tracking-widest" x-text="activeTab"></h2>
+                </div>
+
+                <div class="flex items-center gap-4">
+                    <button @click="openModal()" class="bg-hyper-green hover:bg-[#78e3d4] text-black text-xs font-bold px-4 py-2 rounded-sm transition-colors flex items-center gap-2 font-mono uppercase tracking-wide">
+                        <i class="ph-bold ph-plus"></i>
+                        <span>Log Trade</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- CONTENT AREA SWAPPER -->
+            <div class="flex-1 overflow-y-auto p-4 md:p-6">
+                
+                <!-- VIEW: DASHBOARD -->
+                <div x-show="activeTab === 'dashboard'" x-transition.opacity class="space-y-6">
+                    <!-- KPI BAR -->
+                    <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-hyper-surface border border-hyper-border p-4 rounded-sm">
+                            <div class="text-[10px] text-hyper-text uppercase font-mono mb-1">Net PnL (Mo)</div>
+                            <div class="text-2xl font-mono font-medium" :class="stats.netPnL >= 0 ? 'text-hyper-green' : 'text-hyper-red'" x-text="formatMoney(stats.netPnL)"></div>
+                        </div>
+                        <div class="bg-hyper-surface border border-hyper-border p-4 rounded-sm">
+                            <div class="text-[10px] text-hyper-text uppercase font-mono mb-1">Win Rate</div>
+                            <div class="text-2xl font-mono font-medium text-hyper-white" x-text="stats.winRate + '%'"></div>
+                        </div>
+                        <div class="bg-hyper-surface border border-hyper-border p-4 rounded-sm">
+                            <div class="text-[10px] text-hyper-text uppercase font-mono mb-1">Profit Factor</div>
+                            <div class="text-2xl font-mono font-medium text-hyper-white" x-text="stats.profitFactor"></div>
+                        </div>
+                        <div class="bg-hyper-surface border border-hyper-border p-4 rounded-sm">
+                            <div class="text-[10px] text-hyper-text uppercase font-mono mb-1">Total Trades</div>
+                            <div class="text-2xl font-mono font-medium text-hyper-white" x-text="trades.length"></div>
+                        </div>
+                    </section>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- PNL CALENDAR -->
+                        <section class="lg:col-span-2 bg-hyper-surface border border-hyper-border rounded-sm p-5">
+                            <div class="flex items-center justify-between mb-4">
+                                <div class="flex items-center gap-4">
+                                    <button @click="changeMonth(-1)" class="text-hyper-text hover:text-hyper-green transition-colors">
+                                        <i class="ph-bold ph-caret-left"></i>
+                                    </button>
+                                    <h2 class="text-sm font-bold text-hyper-white font-mono uppercase tracking-wide flex items-center gap-2 min-w-[140px] justify-center">
+                                        <i class="ph-bold ph-calendar text-hyper-green"></i>
+                                        <span x-text="currentMonthName"></span>
+                                    </h2>
+                                    <button @click="changeMonth(1)" class="text-hyper-text hover:text-hyper-green transition-colors">
+                                        <i class="ph-bold ph-caret-right"></i>
+                                    </button>
+                                </div>
+                                <div class="flex gap-3 text-[10px] font-mono text-hyper-text">
+                                    <span class="flex items-center gap-1"><div class="w-2 h-2 bg-hyper-green rounded-full"></div> Win</span>
+                                    <span class="flex items-center gap-1"><div class="w-2 h-2 bg-hyper-red rounded-full"></div> Loss</span>
+                                </div>
+                            </div>
+                            <div class="w-full">
+                                <div class="grid grid-cols-7 gap-1 mb-1 text-center">
+                                    <template x-for="day in ['M', 'T', 'W', 'T', 'F', 'S', 'S']">
+                                        <div class="text-[10px] font-mono text-hyper-text opacity-50" x-text="day"></div>
+                                    </template>
+                                </div>
+                                <div class="grid grid-cols-7 gap-1">
+                                    <template x-for="blank in blanks" :key="'blank-'+blank">
+                                        <div class="aspect-square"></div>
+                                    </template>
+                                    <template x-for="day in days" :key="day.date">
+                                        <div class="relative group aspect-square border transition-all duration-100 cursor-pointer flex flex-col items-center justify-center"
+                                             @click="selectDay(day.date)"
+                                             :class="{
+                                                'bg-hyper-greenDim border-hyper-green/30 text-hyper-green': day.pnl > 0,
+                                                'bg-hyper-redDim border-hyper-red/30 text-hyper-red': day.pnl < 0,
+                                                'bg-hyper-base border-hyper-border text-hyper-text hover:bg-white/5': day.pnl === 0,
+                                                'ring-2 ring-hyper-white': selectedDate.endsWith(String(day.date).padStart(2, '0')) && currentDate.getMonth() + 1 == parseInt(selectedDate.split('-')[1]),
+                                                'ring-1 ring-white/20': day.isToday && !(selectedDate.endsWith(String(day.date).padStart(2, '0')))
+                                             }">
+                                            <span class="text-[10px] font-mono absolute top-1 left-1 opacity-50" x-text="day.date"></span>
+                                            <!-- Little dot if note exists -->
+                                            <template x-if="journalNotes[`${currentDate.getFullYear()}-${String(currentDate.getMonth()+1).padStart(2,'0')}-${String(day.date).padStart(2,'0')}`]">
+                                                <div class="absolute top-1 right-1 w-1 h-1 bg-hyper-white rounded-full"></div>
+                                            </template>
+                                            <template x-if="day.trades > 0">
+                                                <div class="text-center">
+                                                    <div class="text-xs md:text-sm font-mono font-bold tracking-tighter" x-text="Math.abs(day.pnl)"></div>
+                                                </div>
+                                            </template>
+                                            <div class="absolute bottom-full mb-1 z-20 hidden group-hover:block min-w-[100px] bg-[#000] border border-hyper-border p-2 pointer-events-none shadow-xl">
+                                                <div class="text-[10px] text-hyper-text font-mono mb-1 border-b border-white/10 pb-1" x-text="currentMonthName + ' ' + day.date"></div>
+                                                <div class="flex justify-between items-center gap-4 text-xs font-mono">
+                                                    <span class="text-hyper-text">PnL</span>
+                                                    <span :class="day.pnl >= 0 ? 'text-hyper-green' : 'text-hyper-red'" x-text="formatMoney(day.pnl)"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- SIMPLE JOURNAL NOTE -->
+                        <section class="bg-hyper-surface border border-hyper-border rounded-sm p-5 flex flex-col h-full">
+                            <div class="flex justify-between items-center mb-3">
+                                <h3 class="text-sm font-bold text-hyper-white font-mono uppercase tracking-wide">
+                                    Note: <span class="text-hyper-green" x-text="selectedDate"></span>
+                                </h3>
+                                <span x-show="noteSaved" x-transition.opacity class="text-[10px] text-hyper-green font-mono uppercase">Saved</span>
+                            </div>
+                            <textarea x-model="currentNoteContent" 
+                                      class="flex-1 bg-hyper-base border border-hyper-border p-3 text-xs font-mono text-hyper-text resize-none focus:outline-none focus:border-hyper-green transition-colors placeholder-white/10"
+                                      placeholder="// Market thoughts..."></textarea>
+                            <button @click="saveNote()" class="mt-3 w-full py-2 bg-hyper-border hover:bg-white/10 text-hyper-white text-xs font-mono uppercase transition-colors rounded-sm">
+                                Save Entry
+                            </button>
+                        </section>
+                    </div>
+                </div>
+
+                <!-- VIEW: JOURNAL (DETAILED) -->
+                <div x-show="activeTab === 'journal'" x-cloak class="space-y-6">
+                    <div class="bg-hyper-surface border border-hyper-border rounded-sm overflow-hidden">
+                        <div class="p-4 border-b border-hyper-border bg-hyper-surface">
+                            <h3 class="text-sm font-bold text-hyper-white font-mono uppercase tracking-wide">Detailed Trade Log</h3>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left">
+                                <thead class="bg-hyper-base border-b border-hyper-border">
+                                    <tr>
+                                        <th class="px-4 py-3 text-[10px] font-mono text-hyper-text uppercase tracking-wider">Date</th>
+                                        <th class="px-4 py-3 text-[10px] font-mono text-hyper-text uppercase tracking-wider">Pair</th>
+                                        <th class="px-4 py-3 text-[10px] font-mono text-hyper-text uppercase tracking-wider">Side</th>
+                                        <th class="px-4 py-3 text-[10px] font-mono text-hyper-text uppercase tracking-wider text-right">Result</th>
+                                        <th class="px-4 py-3 text-[10px] font-mono text-hyper-text uppercase tracking-wider w-1/2">Notes</th>
+                                        <th class="px-4 py-3"></th>
+                                    </tr>
+                                </thead>
+                                <tbody class="font-mono text-xs divide-y divide-hyper-border/50">
+                                    <template x-for="trade in sortedTrades" :key="trade.id">
+                                        <tr class="hover:bg-white/5 transition-colors group">
+                                            <td class="px-4 py-3 text-hyper-text" x-text="formatDate(trade.date)"></td>
+                                            <td class="px-4 py-3 font-bold text-hyper-white" x-text="trade.pair"></td>
+                                            <td class="px-4 py-3">
+                                                <span class="px-1.5 py-0.5 text-[10px] border uppercase"
+                                                      :class="trade.side === 'Long' ? 'text-hyper-green border-hyper-green/30 bg-hyper-green/5' : 'text-hyper-red border-hyper-red/30 bg-hyper-red/5'"
+                                                      x-text="trade.side"></span>
+                                            </td>
+                                            <td class="px-4 py-3 text-right font-medium" 
+                                                :class="trade.pnl > 0 ? 'text-hyper-green' : 'text-hyper-red'"
+                                                x-text="formatMoney(trade.pnl)"></td>
+                                            <td class="px-4 py-3">
+                                                <input type="text" 
+                                                       x-model="trade.notes" 
+                                                       @change="saveData()"
+                                                       class="w-full bg-transparent border-b border-transparent hover:border-hyper-border focus:border-hyper-green focus:outline-none text-hyper-text placeholder-white/10 text-xs transition-colors" 
+                                                       placeholder="Add notes...">
+                                            </td>
+                                            <td class="px-4 py-3 text-center">
+                                                <button @click="deleteTrade(trade.id)" class="text-hyper-border hover:text-hyper-red transition-colors">
+                                                    <i class="ph-bold ph-trash"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW: ANALYTICS -->
+                <div x-show="activeTab === 'analytics'" x-cloak class="space-y-6">
+                    <div class="bg-hyper-surface border border-hyper-border rounded-sm p-6">
+                        <h3 class="text-sm font-bold text-hyper-white font-mono uppercase tracking-wide mb-6">Equity Curve (Simulated)</h3>
+                        <div class="w-full h-64 bg-hyper-base border border-hyper-border relative rounded-sm overflow-hidden">
+                            <svg class="w-full h-full" viewBox="0 0 1000 300" preserveAspectRatio="none">
+                                <line x1="0" y1="75" x2="1000" y2="75" stroke="#25272b" stroke-dasharray="4"/>
+                                <line x1="0" y1="150" x2="1000" y2="150" stroke="#25272b" stroke-dasharray="4"/>
+                                <line x1="0" y1="225" x2="1000" y2="225" stroke="#25272b" stroke-dasharray="4"/>
+                                <polyline fill="none" stroke="#50d2c1" stroke-width="2" vector-effect="non-scaling-stroke" :points="equityCurvePoints" />
+                            </svg>
+                            <div class="absolute top-2 right-4 text-xs font-mono text-hyper-text">Current: <span class="text-hyper-white" x-text="formatMoney(portfolioValue)"></span></div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="bg-hyper-surface border border-hyper-border rounded-sm p-5">
+                            <h3 class="text-sm font-bold text-hyper-white font-mono uppercase tracking-wide mb-4">Performance By Pair</h3>
+                            <div class="space-y-3">
+                                <template x-for="pair in pairPerformance" :key="pair.name">
+                                    <div class="flex items-center justify-between p-2 hover:bg-white/5 rounded-sm transition-colors">
+                                        <div class="flex items-center gap-3">
+                                            <span class="font-mono font-bold text-hyper-white text-sm" x-text="pair.name"></span>
+                                            <span class="text-[10px] text-hyper-text font-mono" x-text="pair.count + ' trades'"></span>
+                                        </div>
+                                        <div class="text-right">
+                                            <div class="font-mono font-bold text-sm" 
+                                                 :class="pair.pnl > 0 ? 'text-hyper-green' : 'text-hyper-red'"
+                                                 x-text="formatMoney(pair.pnl)"></div>
+                                            <div class="text-[10px] text-hyper-text font-mono">WR: <span x-text="pair.winRate + '%'"></span></div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                        <div class="bg-hyper-surface border border-hyper-border rounded-sm p-5 flex flex-col items-center justify-center">
+                            <h3 class="text-sm font-bold text-hyper-white font-mono uppercase tracking-wide mb-6 w-full text-left">Global Win Rate</h3>
+                            <div class="relative w-32 h-32 flex items-center justify-center">
+                                <svg class="w-full h-full transform -rotate-90">
+                                    <circle cx="64" cy="64" r="56" stroke="#25272b" stroke-width="12" fill="none"></circle>
+                                    <circle cx="64" cy="64" r="56" stroke="#50d2c1" stroke-width="12" fill="none"
+                                            :stroke-dasharray="2 * Math.PI * 56"
+                                            :stroke-dashoffset="2 * Math.PI * 56 * (1 - stats.winRate / 100)"></circle>
+                                </svg>
+                                <div class="absolute text-2xl font-mono font-bold text-hyper-white" x-text="stats.winRate + '%'"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW: SETTINGS (NEW) -->
+                <div x-show="activeTab === 'settings'" x-cloak class="max-w-2xl mx-auto space-y-6">
+                    <div class="bg-hyper-surface border border-hyper-border rounded-sm p-6">
+                        <h3 class="text-sm font-bold text-hyper-white font-mono uppercase tracking-wide mb-6 flex items-center gap-2">
+                            <i class="ph-bold ph-wallet text-hyper-green"></i>
+                            Account Settings
+                        </h3>
+                        
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-xs text-hyper-text font-mono uppercase mb-2">Starting Balance (USD)</label>
+                                <input type="number" 
+                                       x-model="basePortfolio" 
+                                       class="w-full bg-hyper-base border border-hyper-border p-3 text-sm font-mono text-hyper-white focus:border-hyper-green focus:outline-none placeholder-white/20 rounded-sm transition-all" 
+                                       placeholder="45000">
+                                <p class="text-[10px] text-hyper-text mt-2 font-mono">
+                                    This value is used as the base for all PnL and Equity Curve calculations.
+                                </p>
+                            </div>
+
+                            <div class="flex gap-4 pt-4">
+                                <button @click="savePortfolio()" class="px-6 py-2 bg-hyper-green hover:bg-[#78e3d4] text-black text-xs font-bold font-mono uppercase transition-colors rounded-sm">
+                                    Update Balance
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+
+        <!-- MODAL -->
+        <div x-show="showModal" 
+             class="fixed inset-0 z-50 flex items-center justify-center px-4"
+             x-cloak>
+            <div class="absolute inset-0 bg-black/80 backdrop-blur-sm" @click="closeModal()"></div>
+            
+            <div class="relative bg-hyper-surface border border-hyper-border w-full max-w-sm p-6 shadow-2xl">
+                <h3 class="text-sm font-bold text-hyper-white font-mono uppercase mb-6 border-b border-hyper-border pb-2">New Position</h3>
+                <div class="space-y-4 font-mono">
+                    <div>
+                        <label class="block text-[10px] text-hyper-text uppercase mb-1">Pair</label>
+                        <input type="text" x-model="newTradeForm.pair" class="w-full bg-hyper-base border border-hyper-border p-2 text-hyper-white text-xs focus:border-hyper-green focus:outline-none uppercase placeholder-white/20" placeholder="BTC-PERP">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-[10px] text-hyper-text uppercase mb-1">Side</label>
+                            <select x-model="newTradeForm.side" class="w-full bg-hyper-base border border-hyper-border p-2 text-hyper-white text-xs focus:border-hyper-green focus:outline-none appearance-none">
+                                <option value="Long">Long</option>
+                                <option value="Short">Short</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] text-hyper-text uppercase mb-1">Date</label>
+                            <input type="date" x-model="newTradeForm.date" class="w-full bg-hyper-base border border-hyper-border p-2 text-hyper-white text-xs focus:border-hyper-green focus:outline-none">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] text-hyper-text uppercase mb-1">PnL (USD)</label>
+                        <input type="number" x-model="newTradeForm.pnl" class="w-full bg-hyper-base border border-hyper-border p-2 text-hyper-white text-xs focus:border-hyper-green focus:outline-none placeholder-white/20" placeholder="0.00">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] text-hyper-text uppercase mb-1">Initial Note</label>
+                        <textarea x-model="newTradeForm.notes" class="w-full bg-hyper-base border border-hyper-border p-2 text-hyper-white text-xs focus:border-hyper-green focus:outline-none placeholder-white/20 h-20 resize-none" placeholder="Why did you take this trade?"></textarea>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3 mt-6">
+                    <button @click="closeModal()" class="px-4 py-2 bg-hyper-base hover:bg-white/5 border border-hyper-border text-hyper-text text-xs font-mono uppercase transition-colors">Cancel</button>
+                    <button @click="submitTrade()" class="px-4 py-2 bg-hyper-green hover:bg-[#78e3d4] text-black text-xs font-bold font-mono uppercase transition-colors border border-transparent">Confirm</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>
