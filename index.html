@@ -551,7 +551,8 @@
                                             </template>
                                             <template x-if="day.trades > 0">
                                                 <div class="text-center">
-                                                    <div class="text-xs md:text-sm font-mono font-bold tracking-tighter" x-text="Math.abs(day.pnl)"></div>
+                                                    <div class="text-xs md:text-sm font-mono font-bold tracking-tighter" 
+                                                         x-text="(day.pnl >= 0 ? '+' : '-') + Math.abs(day.pnl)"></div>
                                                 </div>
                                             </template>
                                             <div class="absolute bottom-full mb-1 z-20 hidden group-hover:block min-w-[100px] bg-[#000] border border-hyper-border p-2 pointer-events-none shadow-xl">
